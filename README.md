@@ -1,0 +1,145 @@
+# AI-Ready Workspace Aggregator
+
+Backend service that collects items from corporate channels (email, Telegram,
+task trackers), normalizes and **deduplicates** them into a single store, and
+exposes a REST API that an AI agent queries for context.
+
+The current build ships a **fully working GitHub Issues vertical slice**
+end-to-end; the Telegram and Email connectors are wired into the registry, API
+and scheduler as stubs, ready to be filled in.
+
+---
+
+## Architecture
+
+```
+                 ┌────────────┐
+   GitHub API ──▶│            │
+   Telegram   ──▶│ Connectors │──▶ UnifiedMessage ──▶ ingest.upsert_messages
+   IMAP/email ──▶│            │        (Pydantic)        (ON CONFLICT)
+                 └────────────┘                              │
+                                                             ▼
+   Celery Beat ──▶ sync_connector (retry on 429/5xx) ──▶  PostgreSQL
+                         │                                   ▲
+                         ├─▶ download_attachments ─▶ MinIO (S3)
+                         └─▶ embed_message ─▶ Qdrant   (optional, flag)
+                                                             │
+   AI agent ──▶ FastAPI  GET /api/v1/messages ◀──────────────┘
+```
+
+**Data flow:** a connector turns whatever a source returns into one canonical
+`UnifiedMessage`; `ingest.upsert_messages` writes it with
+`INSERT … ON CONFLICT (source_system, external_id) DO UPDATE`, so re-running a
+sync over the same window updates in place instead of duplicating. Binary
+attachments go to S3/MinIO; Postgres keeps only the object reference.
+
+### Key design points (mapped to the brief)
+
+| Requirement | Where |
+|---|---|
+| Unified model + relational design | [app/db/models.py](app/db/models.py), [app/schemas/message.py](app/schemas/message.py) |
+| Dedup via unique index + upsert | [app/services/ingest.py](app/services/ingest.py) (`uq_messages_source_external`, `xmax = 0` insert/update detection) |
+| Idempotent pipelines | re-running a sync is a no-op on data — proven in [tests/test_dedup.py](tests/test_dedup.py) |
+| Retry on rate limits / 5xx | [app/tasks/sync.py](app/tasks/sync.py) + [app/connectors/github.py](app/connectors/github.py) (`RetryableError`) |
+| Scheduled background work | Celery Beat in [app/core/celery_app.py](app/core/celery_app.py) |
+| S3 for files | [app/services/storage.py](app/services/storage.py), [app/tasks/attachments.py](app/tasks/attachments.py) |
+| Audit / traceability | `processing_status`, `error_log`, `fetched_at` + structlog `trace_id` ([app/core/logging.py](app/core/logging.py)) |
+| REST API for the agent | [app/api/v1/](app/api/v1/) |
+| Optional vector search | feature-flagged [app/tasks/embeddings.py](app/tasks/embeddings.py) (`VECTOR_ENABLED`) |
+
+---
+
+## Stack
+
+Python 3.11 · FastAPI · SQLAlchemy 2.0 + Alembic · PostgreSQL · Celery + Redis ·
+MinIO (S3) · structlog · httpx · Docker Compose · (optional) Qdrant.
+
+Sync SQLAlchemy is used in both the API and the workers so there is no
+async/Celery friction; FastAPI runs the read endpoints in a threadpool.
+
+---
+
+## Quick start
+
+```bash
+cp .env.example .env
+make up            # build + start api, worker, beat, postgres, redis, minio
+```
+
+The `api` service runs `alembic upgrade head` on boot. Then:
+
+```bash
+# Force a GitHub sync (defaults to the pydantic/pydantic repo; set GITHUB_REPOS/GITHUB_TOKEN in .env)
+make sync
+# or:
+curl -X POST http://localhost:8000/api/v1/connectors/github/sync
+
+# Read what the agent would read
+curl "http://localhost:8000/api/v1/messages?source=github&limit=10"
+```
+
+- API docs (Swagger): http://localhost:8000/docs
+- MinIO console: http://localhost:9001 (`minioadmin` / `minioadmin`)
+
+### Optional vector store
+
+```bash
+docker compose --profile vector up -d qdrant   # then set VECTOR_ENABLED=true in .env
+```
+
+---
+
+## API
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/health` | liveness |
+| GET | `/api/v1/messages` | list with `source`, `status`, `q`, `limit`, `offset` |
+| GET | `/api/v1/messages/{id}` | single message + attachments |
+| GET | `/api/v1/connectors` | connectors and whether they are configured |
+| POST | `/api/v1/connectors/{source}/sync` | enqueue a sync, returns Celery `task_id` |
+
+---
+
+## Tests
+
+```bash
+make test          # docker compose run --rm api pytest
+```
+
+Tests run against the real Postgres because the idempotency guarantee depends on
+`ON CONFLICT` and the `xmax = 0` trick. They use a dedicated `aggregator_test`
+database (created automatically) so development data is never touched. The
+headline test asserts that replaying a sync produces zero new rows.
+
+```bash
+make lint          # ruff
+```
+
+---
+
+## Project layout
+
+```
+app/
+  core/        config, structlog logging (trace_id), celery app
+  db/          Base, session, ORM models (Message, Attachment)
+  schemas/     UnifiedMessage + API read models
+  connectors/  base ABC, github (full), telegram/email (stubs), registry
+  services/    ingest (idempotent upsert), storage (S3/MinIO)
+  tasks/       sync (retry/backoff), attachments, embeddings (flagged)
+  api/v1/      messages, connectors routers
+alembic/       migrations
+tests/         dedup idempotency + API
+```
+
+---
+
+## Roadmap
+
+- [ ] Telegram connector — long polling via `getUpdates`
+- [ ] Email connector — IMAP `UNSEEN` + MIME parse + attachments
+- [ ] Pick an embedding provider and implement Qdrant upsert
+- [ ] Incremental GitHub sync via `since` + per-connector cursor
+- [ ] Per-source `error_log` surfaced through the API
+```

@@ -1,0 +1,26 @@
+# --- Web / API ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# --- Settings / validation ---
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# --- Database ---
+SQLAlchemy==2.0.36
+alembic==1.14.0
+psycopg2-binary==2.9.10
+
+# --- Background tasks / broker ---
+celery==5.4.0
+redis==5.2.1
+
+# --- External integrations ---
+httpx==0.28.1            # GitHub Issues / generic HTTP
+python-telegram-bot==21.9  # Telegram (long polling)
+
+# --- Object storage (S3 / MinIO) ---
+boto3==1.35.92
+
+# --- Logging ---
+structlog==24.4.0
