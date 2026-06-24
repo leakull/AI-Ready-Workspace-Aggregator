@@ -1,9 +1,11 @@
 """Connector interface.
 
 A connector is a thin adapter: talk to one source system, normalize whatever it
-returns into ``UnifiedMessage``. It must NOT touch the database — persistence is
-the ingest service's job. This keeps connectors independently testable and makes
-adding a new source a matter of implementing ``fetch``.
+returns into ``UnifiedMessage``. It must NOT touch the *message* store —
+persisting messages is the ingest service's job. (A connector MAY keep its own
+small polling cursor in a side store; see ``on_sync_committed``.) This keeps
+connectors independently testable and makes adding a new source a matter of
+implementing ``fetch``.
 
 ``RetryableError`` is the contract between a connector and the Celery layer:
 raise it for transient failures (rate limits, 5xx, network blips) and the task
@@ -42,3 +44,12 @@ class BaseConnector(ABC):
         problems so the Celery task can retry with backoff.
         """
         raise NotImplementedError
+
+    def on_sync_committed(self) -> None:
+        """Called by the sync task only after messages are committed.
+
+        Polling connectors advance their cursor here (not inside ``fetch``) so a
+        failed commit re-fetches the same window instead of silently dropping
+        it. Default is a no-op.
+        """
+        return None

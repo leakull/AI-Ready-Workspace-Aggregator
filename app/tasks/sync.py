@@ -52,6 +52,12 @@ def sync_connector(self, source: str) -> dict:
         return {"source": source, "status": "skipped", "reason": str(exc)}
     # RetryableError propagates to Celery's autoretry machinery.
 
+    # Advance any polling cursor only now that messages are durably committed.
+    try:
+        connector.on_sync_committed()
+    except Exception as exc:  # cursor failure is recoverable: next run re-fetches
+        log.warning("sync.cursor_advance_failed", source=source, error=str(exc))
+
     # Fan out optional post-processing (each is a no-op unless enabled/needed).
     _enqueue_followups(message_ids)
 

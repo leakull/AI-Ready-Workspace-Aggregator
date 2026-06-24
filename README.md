@@ -4,9 +4,10 @@ Backend service that collects items from corporate channels (email, Telegram,
 task trackers), normalizes and **deduplicates** them into a single store, and
 exposes a REST API that an AI agent queries for context.
 
-The current build ships a **fully working GitHub Issues vertical slice**
-end-to-end; the Telegram and Email connectors are wired into the registry, API
-and scheduler as stubs, ready to be filled in.
+The current build ships two connectors working end-to-end — **GitHub Issues**
+and **Telegram** (polling via `getUpdates` with an offset cursor). The Email
+connector is wired into the registry, API and scheduler as a stub, ready to be
+filled in.
 
 ---
 
@@ -41,6 +42,7 @@ attachments go to S3/MinIO; Postgres keeps only the object reference.
 | Dedup via unique index + upsert | [app/services/ingest.py](app/services/ingest.py) (`uq_messages_source_external`, `xmax = 0` insert/update detection) |
 | Idempotent pipelines | re-running a sync is a no-op on data — proven in [tests/test_dedup.py](tests/test_dedup.py) |
 | Retry on rate limits / 5xx | [app/tasks/sync.py](app/tasks/sync.py) + [app/connectors/github.py](app/connectors/github.py) (`RetryableError`) |
+| At-least-once polling (offset advanced only after commit) | [app/connectors/telegram.py](app/connectors/telegram.py) + [app/services/cursor.py](app/services/cursor.py) |
 | Scheduled background work | Celery Beat in [app/core/celery_app.py](app/core/celery_app.py) |
 | S3 for files | [app/services/storage.py](app/services/storage.py), [app/tasks/attachments.py](app/tasks/attachments.py) |
 | Audit / traceability | `processing_status`, `error_log`, `fetched_at` + structlog `trace_id` ([app/core/logging.py](app/core/logging.py)) |
@@ -125,7 +127,7 @@ app/
   core/        config, structlog logging (trace_id), celery app
   db/          Base, session, ORM models (Message, Attachment)
   schemas/     UnifiedMessage + API read models
-  connectors/  base ABC, github (full), telegram/email (stubs), registry
+  connectors/  base ABC, github + telegram (full), email (stub), registry
   services/    ingest (idempotent upsert), storage (S3/MinIO)
   tasks/       sync (retry/backoff), attachments, embeddings (flagged)
   api/v1/      messages, connectors routers
@@ -137,9 +139,10 @@ tests/         dedup idempotency + API
 
 ## Roadmap
 
-- [ ] Telegram connector — long polling via `getUpdates`
+- [x] Telegram connector — polling via `getUpdates` with an offset cursor (Redis)
+- [ ] Telegram attachments — resolve `getFile` download path and push to S3
 - [ ] Email connector — IMAP `UNSEEN` + MIME parse + attachments
 - [ ] Pick an embedding provider and implement Qdrant upsert
-- [ ] Incremental GitHub sync via `since` + per-connector cursor
+- [ ] Incremental GitHub sync via `since` (cursor groundwork now in place)
 - [ ] Per-source `error_log` surfaced through the API
 ```
