@@ -1,5 +1,8 @@
 # AI-Ready Workspace Aggregator
 
+<!-- Activates once pushed to GitHub — replace <owner>/<repo> with your path. -->
+[![CI](https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg)](https://github.com/<owner>/<repo>/actions/workflows/ci.yml)
+
 Backend service that collects items from corporate channels (email, Telegram,
 task trackers), normalizes and **deduplicates** them into a single store, and
 exposes a REST API that an AI agent queries for context.
@@ -63,8 +66,16 @@ async/Celery friction; FastAPI runs the read endpoints in a threadpool.
 
 ## Quick start
 
+One command — build the stack, run a GitHub sync, and print ingested messages:
+
 ```bash
 cp .env.example .env
+make demo
+```
+
+Or step by step:
+
+```bash
 make up            # build + start api, worker, beat, postgres, redis, minio
 ```
 
@@ -127,6 +138,11 @@ Tests run against the real Postgres because the idempotency guarantee depends on
 `ON CONFLICT` and the `xmax = 0` trick. They use a dedicated `aggregator_test`
 database (created automatically) so development data is never touched. The
 headline test asserts that replaying a sync produces zero new rows.
+
+**CI** ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs `ruff` + the
+full suite on every push/PR. Everything except Postgres is mocked and Celery runs
+eager, so CI needs only a single Postgres service container — no Redis, MinIO, or
+Qdrant.
 
 ```bash
 make lint          # ruff

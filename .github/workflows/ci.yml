@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    # Tests run against a real Postgres (the idempotency contract relies on
+    # ON CONFLICT + the xmax = 0 trick). Everything else — Redis, S3/MinIO,
+    # Qdrant, the connector HTTP — is mocked, and Celery runs eager, so Postgres
+    # is the only service the suite needs.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: aggregator
+          POSTGRES_PASSWORD: aggregator
+          POSTGRES_DB: aggregator
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aggregator"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: aggregator
+      POSTGRES_PASSWORD: aggregator
+      POSTGRES_DB: aggregator_test   # the suite refuses to run against the dev DB
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check app tests
+
+      - name: Test (pytest)
+        run: pytest -q
