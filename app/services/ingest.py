@@ -55,7 +55,13 @@ def _upsert_message(session: Session, msg: UnifiedMessage) -> tuple[int, bool]:
     stmt = stmt.on_conflict_do_update(
         constraint="uq_messages_source_external",
         set_={field: getattr(stmt.excluded, field) for field in _MUTABLE_MESSAGE_FIELDS}
-        | {"fetched_at": stmt.excluded.fetched_at, "updated_at": literal_column("now()")},
+        | {
+            "fetched_at": stmt.excluded.fetched_at,
+            "updated_at": literal_column("now()"),
+            # A successful re-normalize clears any prior error captured downstream
+            # (status resets to normalized via _MUTABLE_MESSAGE_FIELDS).
+            "error_log": stmt.excluded.error_log,
+        },
     ).returning(
         Message.id,
         # xmax = 0 means the row was freshly inserted (no prior tuple version).

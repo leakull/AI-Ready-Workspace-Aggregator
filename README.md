@@ -45,7 +45,7 @@ attachments go to S3/MinIO; Postgres keeps only the object reference.
 | At-least-once polling (offset advanced only after commit) | [app/connectors/telegram.py](app/connectors/telegram.py) + [app/services/cursor.py](app/services/cursor.py) |
 | Scheduled background work | Celery Beat in [app/core/celery_app.py](app/core/celery_app.py) |
 | S3 for files | [app/services/storage.py](app/services/storage.py); inline upload of email MIME parts in [app/connectors/email.py](app/connectors/email.py); deferred URL download in [app/tasks/attachments.py](app/tasks/attachments.py) |
-| Audit / traceability | `processing_status`, `error_log`, `fetched_at` + structlog `trace_id` ([app/core/logging.py](app/core/logging.py)) |
+| Audit / traceability | `processing_status` + `error_log` (set on permanent failures, e.g. a 404 attachment) surfaced via `GET /api/v1/messages?status=error`; `fetched_at`; structlog `trace_id` ([app/core/logging.py](app/core/logging.py)) |
 | REST API for the agent | [app/api/v1/](app/api/v1/) |
 | Optional semantic search | feature-flagged ([app/vector/](app/vector/), `GET /api/v1/search`) — pluggable embeddings (hash / OpenAI) + Qdrant |
 
@@ -156,8 +156,8 @@ tests/         dedup idempotency + API
 - [x] Telegram connector — polling via `getUpdates` with an offset cursor (Redis)
 - [x] Email connector — IMAP `UNSEEN` (PEEK) + MIME parse + attachments → S3
 - [x] Semantic search — pluggable embeddings (hash / OpenAI) + Qdrant + `/search`
+- [x] Incremental GitHub sync via `since` + per-repo cursor (advanced post-commit)
+- [x] Per-message `error_log` + `processing_status=error`, surfaced through the API
 - [ ] Telegram attachments — resolve `getFile` download path and push to S3
 - [ ] Claude-powered enrichment — summaries / classification (`claude-opus-4-8`)
-- [ ] Incremental GitHub sync via `since` (cursor groundwork now in place)
-- [ ] Per-source `error_log` surfaced through the API
 ```

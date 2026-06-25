@@ -79,6 +79,7 @@ class MessageRead(BaseModel):
     url: str | None
     source_created_at: datetime | None
     processing_status: ProcessingStatus
+    error_log: str | None
     fetched_at: datetime
     created_at: datetime
     updated_at: datetime
