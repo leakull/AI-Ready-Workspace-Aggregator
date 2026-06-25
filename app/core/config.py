@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     imap_port: int = 993
     imap_user: str | None = None
     imap_password: str | None = None
+    imap_use_ssl: bool = True
+    imap_mailbox: str = "INBOX"
+    imap_max_messages: int = 50
 
     # Optional vector module (provider chosen later)
     vector_enabled: bool = False

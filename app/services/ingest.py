@@ -81,6 +81,10 @@ def _upsert_attachments(
             content_type=att.content_type,
             size_bytes=att.size_bytes,
             source_url=att.source_url,
+            # Set when the connector stored the bytes inline (e.g. email);
+            # left NULL when a later download task will fill them (e.g. Telegram).
+            s3_bucket=att.s3_bucket,
+            s3_key=att.s3_key,
         )
         stmt = stmt.on_conflict_do_update(
             constraint="uq_attachments_message_external",

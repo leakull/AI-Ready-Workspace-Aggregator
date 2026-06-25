@@ -15,13 +15,22 @@ from app.db.models import ProcessingStatus, SourceSystem
 
 
 class UnifiedAttachment(BaseModel):
-    """Normalized attachment, not yet downloaded to S3."""
+    """Normalized attachment.
+
+    Two ways an attachment reaches S3:
+      * ``source_url`` set, ``s3_*`` empty — bytes live behind a URL; the
+        download task fetches and stores them later (e.g. Telegram).
+      * ``s3_bucket``/``s3_key`` already set — the connector had the bytes in
+        hand and stored them inline (e.g. email MIME parts).
+    """
 
     external_id: str | None = None
     filename: str
     content_type: str | None = None
     size_bytes: int | None = None
     source_url: str | None = None
+    s3_bucket: str | None = None
+    s3_key: str | None = None
 
 
 class UnifiedMessage(BaseModel):
