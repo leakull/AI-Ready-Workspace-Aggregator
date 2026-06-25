@@ -22,5 +22,8 @@ python-telegram-bot==21.9  # Telegram (long polling)
 # --- Object storage (S3 / MinIO) ---
 boto3==1.35.92
 
+# --- Optional vector store (feature-flagged) ---
+qdrant-client==1.12.1
+
 # --- Logging ---
 structlog==24.4.0

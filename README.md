@@ -47,7 +47,7 @@ attachments go to S3/MinIO; Postgres keeps only the object reference.
 | S3 for files | [app/services/storage.py](app/services/storage.py); inline upload of email MIME parts in [app/connectors/email.py](app/connectors/email.py); deferred URL download in [app/tasks/attachments.py](app/tasks/attachments.py) |
 | Audit / traceability | `processing_status`, `error_log`, `fetched_at` + structlog `trace_id` ([app/core/logging.py](app/core/logging.py)) |
 | REST API for the agent | [app/api/v1/](app/api/v1/) |
-| Optional vector search | feature-flagged [app/tasks/embeddings.py](app/tasks/embeddings.py) (`VECTOR_ENABLED`) |
+| Optional semantic search | feature-flagged ([app/vector/](app/vector/), `GET /api/v1/search`) — pluggable embeddings (hash / OpenAI) + Qdrant |
 
 ---
 
@@ -83,11 +83,24 @@ curl "http://localhost:8000/api/v1/messages?source=github&limit=10"
 - API docs (Swagger): http://localhost:8000/docs
 - MinIO console: http://localhost:9001 (`minioadmin` / `minioadmin`)
 
-### Optional vector store
+### Optional semantic search (vector module)
 
 ```bash
-docker compose --profile vector up -d qdrant   # then set VECTOR_ENABLED=true in .env
+docker compose --profile vector up -d qdrant
+# in .env: VECTOR_ENABLED=true  (EMBEDDING_PROVIDER defaults to "hash" — no key needed)
+docker compose up -d --force-recreate api worker beat
+
+make sync                                        # ingest + embed into Qdrant
+curl "http://localhost:8000/api/v1/search?q=deploy%20failed&limit=5"
 ```
+
+Embeddings are pluggable via `EMBEDDING_PROVIDER`:
+- `hash` (default) — deterministic, dependency-free, no key. Runs anywhere; it is
+  hashed bag-of-words, **not** a true semantic model — for plumbing/demo.
+- `openai` — real semantic embeddings (`text-embedding-3-small`); set `OPENAI_API_KEY`.
+
+Switching providers changes the vector dimension, so recreate the Qdrant
+collection (drop it, or change `QDRANT_COLLECTION`) when you switch.
 
 ---
 
@@ -100,6 +113,7 @@ docker compose --profile vector up -d qdrant   # then set VECTOR_ENABLED=true in
 | GET | `/api/v1/messages/{id}` | single message + attachments |
 | GET | `/api/v1/connectors` | connectors and whether they are configured |
 | POST | `/api/v1/connectors/{source}/sync` | enqueue a sync, returns Celery `task_id` |
+| GET | `/api/v1/search` | semantic search (`q`, `limit`); needs `VECTOR_ENABLED=true` |
 
 ---
 
@@ -141,8 +155,9 @@ tests/         dedup idempotency + API
 
 - [x] Telegram connector — polling via `getUpdates` with an offset cursor (Redis)
 - [x] Email connector — IMAP `UNSEEN` (PEEK) + MIME parse + attachments → S3
+- [x] Semantic search — pluggable embeddings (hash / OpenAI) + Qdrant + `/search`
 - [ ] Telegram attachments — resolve `getFile` download path and push to S3
-- [ ] Pick an embedding provider and implement Qdrant upsert
+- [ ] Claude-powered enrichment — summaries / classification (`claude-opus-4-8`)
 - [ ] Incremental GitHub sync via `since` (cursor groundwork now in place)
 - [ ] Per-source `error_log` surfaced through the API
 ```

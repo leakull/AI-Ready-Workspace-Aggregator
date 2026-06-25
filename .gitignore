@@ -28,3 +28,6 @@ coverage.xml
 
 # Data volumes (if mounted locally)
 data/
+
+# Celery Beat runtime schedule (written into the mounted code dir)
+celerybeat-schedule*

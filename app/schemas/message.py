@@ -96,3 +96,14 @@ class SyncResponse(BaseModel):
     task_id: str
     source: str
     detail: str = "sync enqueued"
+
+
+class SearchHit(BaseModel):
+    score: float
+    message: MessageRead
+
+
+class SearchResponse(BaseModel):
+    query: str
+    provider: str
+    results: list[SearchHit]

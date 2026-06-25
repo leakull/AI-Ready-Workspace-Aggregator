@@ -55,9 +55,16 @@ class Settings(BaseSettings):
     imap_mailbox: str = "INBOX"
     imap_max_messages: int = 50
 
-    # Optional vector module (provider chosen later)
+    # Optional vector module
     vector_enabled: bool = False
     qdrant_url: str = "http://qdrant:6333"
+    qdrant_collection: str = "messages"
+    # Embedding provider: "hash" (deterministic, no deps/keys) or "openai".
+    embedding_provider: str = "hash"
+    embedding_dim: int = 256  # used by the hash provider / Qdrant collection size
+    openai_api_key: str | None = None
+    openai_embedding_model: str = "text-embedding-3-small"
+    openai_embedding_dim: int = 1536
 
     @property
     def database_url(self) -> str:
