@@ -1,10 +1,12 @@
 """Attachment download task.
 
-For messages that carry attachments with a ``source_url`` but no S3 object yet,
-download the bytes and store them in MinIO, then record the bucket+key on the
-row. Idempotent: an attachment already pointing at S3 is skipped, so reruns are
-safe. GitHub issues have no attachments, so this is a no-op for that slice — it
-exists for the Telegram/Email connectors.
+For attachments not yet in S3, fetch the bytes and store them in MinIO, then
+record the bucket+key on the row. The byte source depends on the message's
+origin: a ``source_url`` is downloaded directly, while a Telegram attachment is
+resolved from its ``file_id`` via ``getFile`` at download time (so the bot token
+never lands in the DB). Idempotent: an attachment already pointing at S3 is
+skipped. Email attachments are uploaded inline by the connector, so they never
+reach this task; GitHub issues have none.
 
 Failure handling mirrors the connectors: transient problems (network, 429, 5xx)
 raise :class:`RetryableError` and the task retries with backoff; a permanent
@@ -17,9 +19,10 @@ from __future__ import annotations
 import httpx
 
 from app.connectors.base import RetryableError
+from app.connectors.telegram import resolve_file_url
 from app.core.celery_app import celery_app
 from app.core.logging import get_logger
-from app.db.models import Attachment, Message, ProcessingStatus
+from app.db.models import Attachment, Message, ProcessingStatus, SourceSystem
 from app.db.session import session_scope
 from app.services.storage import build_object_key, ensure_bucket, upload_bytes
 
@@ -45,7 +48,7 @@ def download_attachments(self, message_id: int) -> dict:
         if message is None:
             return {"message_id": message_id, "status": "missing"}
 
-        pending = [a for a in message.attachments if a.source_url and not a.s3_key]
+        pending = [a for a in message.attachments if _downloadable(message, a)]
         if not pending:
             return {"message_id": message_id, "downloaded": 0}
 
@@ -67,10 +70,27 @@ def download_attachments(self, message_id: int) -> dict:
     return {"message_id": message_id, "downloaded": downloaded, "errors": len(errors)}
 
 
+def _downloadable(message: Message, att: Attachment) -> bool:
+    """Whether this task can fetch the attachment's bytes."""
+    if att.s3_key:
+        return False
+    if att.source_url:
+        return True
+    return message.source_system == SourceSystem.telegram and bool(att.external_id)
+
+
+def _resolve_url(message: Message, att: Attachment) -> str:
+    if att.source_url:
+        return att.source_url
+    # Telegram: turn the file_id into a temporary, token-bearing download URL.
+    return resolve_file_url(att.external_id)
+
+
 def _download_one(session, message: Message, att: Attachment) -> int:
+    url = _resolve_url(message, att)
     with _build_client() as client:
         try:
-            resp = client.get(att.source_url)
+            resp = client.get(url)
         except httpx.TransportError as exc:
             raise RetryableError(f"attachment transport error: {exc}") from exc
         if resp.status_code == 429 or resp.status_code >= 500:

@@ -7,8 +7,10 @@ commits (see :meth:`on_sync_committed`), so a failed commit re-fetches the same
 window instead of losing updates — Telegram keeps undelivered updates for ~24h.
 
 ``external_id`` is ``"{chat_id}:{message_id}"`` because ``message_id`` is only
-unique within a chat. Attachment bytes are not downloaded here: Telegram requires
-a separate ``getFile`` call to resolve a download path, left as a follow-up.
+unique within a chat. Attachment bytes are fetched by the download task, which
+resolves a ``file_id`` to a temporary download URL via :func:`resolve_file_url`
+(``getFile``). That URL embeds the bot token, so it is built on demand and never
+persisted — the DB stores only the resulting S3 key.
 """
 
 from __future__ import annotations
@@ -127,6 +129,41 @@ class TelegramConnector(BaseConnector):
             raw=message,
             attachments=_extract_attachments(message),
         )
+
+
+def resolve_file_url(
+    file_id: str, token: str | None = None, client: httpx.Client | None = None
+) -> str:
+    """Resolve a Telegram ``file_id`` to a temporary download URL via ``getFile``.
+
+    The returned URL embeds the bot token and MUST NOT be persisted — call this
+    at download time. Transient failures raise :class:`RetryableError`; a
+    permanent failure surfaces as ``httpx.HTTPStatusError`` (4xx).
+    """
+    token = token or settings.telegram_bot_token
+    if not token:
+        raise ConnectorNotConfigured("TELEGRAM_BOT_TOKEN is not set")
+
+    base = f"{TELEGRAM_API}/bot{token}"
+    own_client = client is None
+    client = client or httpx.Client(timeout=30.0)
+    try:
+        try:
+            resp = client.get(f"{base}/getFile", params={"file_id": file_id})
+        except httpx.TransportError as exc:
+            raise RetryableError(f"telegram getFile transport error: {exc}") from exc
+        if resp.status_code == 429 or resp.status_code >= 500:
+            raise RetryableError(f"telegram getFile status {resp.status_code}")
+        resp.raise_for_status()
+        payload = resp.json()
+        if not payload.get("ok"):
+            raise RetryableError(f"telegram getFile not ok: {payload.get('description')}")
+        file_path = payload["result"]["file_path"]
+    finally:
+        if own_client:
+            client.close()
+
+    return f"{TELEGRAM_API}/file/bot{token}/{file_path}"
 
 
 def _maybe_id(sender: dict) -> str | None:

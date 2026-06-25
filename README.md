@@ -44,7 +44,7 @@ attachments go to S3/MinIO; Postgres keeps only the object reference.
 | Retry on rate limits / 5xx | [app/tasks/sync.py](app/tasks/sync.py) + [app/connectors/github.py](app/connectors/github.py) (`RetryableError`) |
 | At-least-once polling (offset advanced only after commit) | [app/connectors/telegram.py](app/connectors/telegram.py) + [app/services/cursor.py](app/services/cursor.py) |
 | Scheduled background work | Celery Beat in [app/core/celery_app.py](app/core/celery_app.py) |
-| S3 for files | [app/services/storage.py](app/services/storage.py); inline upload of email MIME parts in [app/connectors/email.py](app/connectors/email.py); deferred URL download in [app/tasks/attachments.py](app/tasks/attachments.py) |
+| S3 for files | [app/services/storage.py](app/services/storage.py); email MIME parts uploaded inline ([app/connectors/email.py](app/connectors/email.py)); Telegram `getFile`→download→S3 in [app/tasks/attachments.py](app/tasks/attachments.py) (bot token never persisted) |
 | Audit / traceability | `processing_status` + `error_log` (set on permanent failures, e.g. a 404 attachment) surfaced via `GET /api/v1/messages?status=error`; `fetched_at`; structlog `trace_id` ([app/core/logging.py](app/core/logging.py)) |
 | REST API for the agent | [app/api/v1/](app/api/v1/) |
 | Optional semantic search | feature-flagged ([app/vector/](app/vector/), `GET /api/v1/search`) — pluggable embeddings (hash / OpenAI) + Qdrant |
@@ -158,6 +158,6 @@ tests/         dedup idempotency + API
 - [x] Semantic search — pluggable embeddings (hash / OpenAI) + Qdrant + `/search`
 - [x] Incremental GitHub sync via `since` + per-repo cursor (advanced post-commit)
 - [x] Per-message `error_log` + `processing_status=error`, surfaced through the API
-- [ ] Telegram attachments — resolve `getFile` download path and push to S3
+- [x] Telegram attachments — `getFile` resolution → download → S3 (token kept out of DB)
 - [ ] Claude-powered enrichment — summaries / classification (`claude-opus-4-8`)
 ```

@@ -12,11 +12,13 @@ import pytest
 from sqlalchemy import select
 
 from app.connectors.base import ConnectorNotConfigured, RetryableError
-from app.connectors.telegram import CURSOR_KEY, TelegramConnector
+from app.connectors.telegram import CURSOR_KEY, TelegramConnector, resolve_file_url
 from app.db.models import Message
 from app.db.session import SessionLocal, session_scope
+from app.schemas.message import SourceSystem, UnifiedAttachment, UnifiedMessage
 from app.services.cursor import InMemoryCursorStore
 from app.services.ingest import upsert_messages
+from app.tasks.attachments import download_attachments
 from tests.conftest import count_messages
 
 UPDATES_PAYLOAD = {
@@ -141,3 +143,65 @@ def test_not_configured():
     conn = TelegramConnector(token=None, cursor=InMemoryCursorStore())
     with pytest.raises(ConnectorNotConfigured):
         list(conn.fetch())
+
+
+# --------------------------------------------------------------------------- #
+# Attachments: getFile -> S3
+# --------------------------------------------------------------------------- #
+def test_resolve_file_url_builds_download_url():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/getFile")
+        assert request.url.params["file_id"] == "FILEID1"
+        return httpx.Response(
+            200,
+            json={"ok": True, "result": {"file_id": "FILEID1", "file_path": "documents/f_5.bin"}},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    url = resolve_file_url("FILEID1", token="TESTTOKEN", client=client)
+    assert url == "https://api.telegram.org/file/botTESTTOKEN/documents/f_5.bin"
+
+
+def test_download_telegram_attachment_to_s3(monkeypatch):
+    message = UnifiedMessage(
+        source_system=SourceSystem.telegram,
+        external_id="-100:55",
+        thread_external_id="-100",
+        body="see file",
+        attachments=[
+            UnifiedAttachment(
+                external_id="FILEID1", filename="doc.bin", content_type="application/pdf"
+            )
+        ],
+    )
+    with session_scope() as s:
+        upsert_messages(s, [message])
+    with SessionLocal() as s:
+        mid = s.execute(
+            select(Message).where(Message.external_id == "-100:55")
+        ).scalar_one().id
+
+    uploads: list = []
+    monkeypatch.setattr(
+        "app.tasks.attachments.resolve_file_url", lambda file_id: f"http://tg-file/{file_id}"
+    )
+    monkeypatch.setattr("app.tasks.attachments.ensure_bucket", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "app.tasks.attachments.upload_bytes",
+        lambda key, data, content_type=None, bucket=None: (
+            uploads.append((key, len(data))) or ("attachments", key)
+        ),
+    )
+    transport = httpx.MockTransport(lambda r: httpx.Response(200, content=b"PDF-BYTES"))
+    monkeypatch.setattr(
+        "app.tasks.attachments._build_client", lambda: httpx.Client(transport=transport)
+    )
+
+    result = download_attachments(mid)
+    assert result["downloaded"] == 1
+
+    with SessionLocal() as s:
+        att = s.get(Message, mid).attachments[0]
+        assert att.s3_bucket == "attachments"
+        assert att.s3_key == "telegram/-100:55/doc.bin"
+        assert att.size_bytes == len(b"PDF-BYTES")
