@@ -1,7 +1,6 @@
 # AI-Ready Workspace Aggregator
 
-<!-- Activates once pushed to GitHub — replace <owner>/<repo> with your path. -->
-[![CI](https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg)](https://github.com/<owner>/<repo>/actions/workflows/ci.yml)
+[![CI](https://github.com/leakull/AI-Ready-Workspace-Aggregator/actions/workflows/ci.yml/badge.svg)](https://github.com/leakull/AI-Ready-Workspace-Aggregator/actions/workflows/ci.yml)
 
 Backend service that collects items from corporate channels (email, Telegram,
 task trackers), normalizes and **deduplicates** them into a single store, and
